@@ -70,8 +70,7 @@ export default function App() {
   // Temporal analysis
   const handleTemporalAnalyze = useCallback(async (poly, years) => {
     if (!poly || !years[0] || !years[1]) return;
-    await gee.getTemporalTimeSeries(poly, years[0], years[1]);
-    await gee.getBuildingFootprints(poly, years[1]);
+    await gee.analyzeBuildingCount(poly, years[0], years[1]);
   }, [gee]);
 
   // Polygon drawn on map
@@ -140,8 +139,8 @@ export default function App() {
             <div className="sidebar-section">
               <div className="sidebar-section-title">Map Analysis</div>
               <p className="text-xs text-secondary" style={{ lineHeight: 1.5 }}>
-                Draw a rectangle on the map to capture satellite imagery for analysis.
-                The captured area will be sent to SAM 3 for building detection.
+                Draw an area on the map to capture satellite imagery.
+                Use the Temporal tab for building count analysis with pre-computed datasets.
               </p>
             </div>
 
@@ -230,8 +229,8 @@ export default function App() {
       <StatusBar
         coordinates={coordinates}
         zoom={zoom}
-        processingStatus={sam.isProcessing ? 'processing' : 'ready'}
-        buildingCount={sam.results?.count}
+        processingStatus={sam.isProcessing || gee.isLoading ? 'processing' : 'ready'}
+        buildingCount={sam.results?.count || gee.temporalData?.count}
       />
 
       <SettingsModal

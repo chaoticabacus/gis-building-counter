@@ -104,6 +104,68 @@ def get_open_buildings(polygon: dict, year: Optional[int] = None) -> dict:
     }
 
 
+def is_initialized() -> bool:
+    """Check if GEE is initialized."""
+    return _initialized
+
+
+def get_open_buildings_temporal(polygon: dict, start_year: int, end_year: int) -> dict:
+    """
+    Query Google Open Buildings 2.5D Temporal dataset.
+    Returns annual building count estimates from 2016–2023.
+    Uses the `building_fractional_count` band summed over the polygon.
+    """
+    _ensure_initialized()
+    ee = _ee
+
+    geometry = _polygon_to_ee_geometry(polygon)
+    time_series = []
+
+    # Clamp to available range (2016–2023)
+    actual_start = max(start_year, 2016)
+    actual_end = min(end_year, 2023)
+
+    for year in range(actual_start, actual_end + 1):
+        try:
+            dataset = ee.ImageCollection(
+                "GOOGLE/Research/open-buildings-temporal/v1"
+            ).filter(
+                ee.Filter.calendarRange(year, year, "year")
+            )
+
+            mosaic = dataset.mosaic()
+            count_band = mosaic.select("building_fractional_count")
+
+            stats = count_band.reduceRegion(
+                reducer=ee.Reducer.sum(),
+                geometry=geometry,
+                scale=4,  # 4m effective resolution
+                maxPixels=1e10,
+            ).getInfo()
+
+            building_count = stats.get("building_fractional_count", 0) or 0
+
+            time_series.append({
+                "year": year,
+                "count": round(building_count),
+            })
+        except Exception as e:
+            logger.warning(f"Open Buildings Temporal query failed for {year}: {e}")
+            time_series.append({"year": year, "count": None})
+
+    start_counts = [d["count"] for d in time_series if d["count"] is not None and d["year"] == actual_start]
+    end_counts = [d["count"] for d in time_series if d["count"] is not None and d["year"] == actual_end]
+
+    return {
+        "timeSeries": time_series,
+        "startCount": start_counts[0] if start_counts else None,
+        "endCount": end_counts[0] if end_counts else None,
+        "source": "google_open_buildings_temporal_v1",
+        "coverage": "africa_south_asia_se_asia_latam",
+    }
+
+
+
 def get_dynamic_world_timeseries(polygon: dict, start_year: int, end_year: int) -> dict:
     """
     Get built-up area percentage time series from Dynamic World.

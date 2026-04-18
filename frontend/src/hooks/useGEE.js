@@ -5,9 +5,43 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 export function useGEE() {
   const [isLoading, setIsLoading] = useState(false);
   const [temporalData, setTemporalData] = useState(null);
+  const [buildingData, setBuildingData] = useState(null);
   const [error, setError] = useState(null);
 
-  // Query building footprints within a polygon
+  // Unified building count query — auto-selects best data source
+  const analyzeBuildingCount = useCallback(async (polygon, startYear, endYear) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/temporal/count`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          polygon,
+          start_year: startYear,
+          end_year: endYear,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Query failed: ${res.statusText}`);
+      }
+
+      const data = await res.json();
+      setTemporalData(data);
+      setBuildingData(data);
+      return data;
+    } catch (err) {
+      setError(err.message);
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Query building footprints within a polygon (legacy, kept for compatibility)
   const getBuildingFootprints = useCallback(async (polygon, year = null) => {
     setIsLoading(true);
     setError(null);
@@ -29,7 +63,7 @@ export function useGEE() {
     }
   }, []);
 
-  // Get built-up area time series
+  // Get built-up area time series (legacy, kept for compatibility)
   const getTemporalTimeSeries = useCallback(async (polygon, startYear, endYear) => {
     setIsLoading(true);
     setError(null);
@@ -81,13 +115,16 @@ export function useGEE() {
 
   const clearTemporalData = useCallback(() => {
     setTemporalData(null);
+    setBuildingData(null);
     setError(null);
   }, []);
 
   return {
     isLoading,
     temporalData,
+    buildingData,
     error,
+    analyzeBuildingCount,
     getBuildingFootprints,
     getTemporalTimeSeries,
     getSatelliteImagery,

@@ -1,4 +1,4 @@
-"""Temporal analysis endpoints using Google Earth Engine."""
+"""Temporal analysis endpoints using Google Earth Engine and Overture Maps."""
 
 import logging
 from typing import Optional
@@ -24,6 +24,104 @@ class TemporalRequest(BaseModel):
 class ImageryRequest(BaseModel):
     polygon: dict
     date_range: list[str]  # [start_date, end_date] as ISO strings
+
+
+@router.post("/temporal/count")
+async def get_building_count(request: TemporalRequest):
+    """
+    Unified building count endpoint.
+    Auto-selects the best data source based on region:
+      - Google Open Buildings (Africa, S/SE Asia, LatAm)
+      - Overture Maps / Microsoft (Central Asia, Ukraine, Middle East, rest of world)
+      - Dynamic World (built-up area % for all regions)
+    
+    Returns building counts, time series, and footprints in one call.
+    """
+    polygon = request.polygon
+    start_year = request.start_year
+    end_year = request.end_year
+
+    result = {
+        "count": None,
+        "startCount": None,
+        "endCount": None,
+        "timeSeries": [],
+        "features": [],
+        "source": None,
+        "builtUpPercent": None,
+    }
+
+    # Strategy 1: Try Google Open Buildings Temporal (2016-2023)
+    gob_temporal = None
+    try:
+        from app.services.gee_service import is_initialized, get_open_buildings_temporal
+        if is_initialized():
+            gob_temporal = get_open_buildings_temporal(polygon, start_year, end_year)
+            if gob_temporal and gob_temporal.get("endCount") and gob_temporal["endCount"] > 0:
+                result["timeSeries"] = gob_temporal["timeSeries"]
+                result["startCount"] = gob_temporal["startCount"]
+                result["endCount"] = gob_temporal["endCount"]
+                result["count"] = gob_temporal["endCount"]
+                result["source"] = gob_temporal["source"]
+                logger.info(f"GOB Temporal: {result['count']} buildings found")
+    except Exception as e:
+        logger.warning(f"GOB Temporal query failed: {e}")
+
+    # Strategy 2: If GOB had no data, try Google Open Buildings V3 polygons
+    if result["count"] is None or result["count"] == 0:
+        try:
+            from app.services.gee_service import is_initialized, get_open_buildings
+            if is_initialized():
+                gob_v3 = get_open_buildings(polygon, end_year)
+                if gob_v3 and gob_v3.get("count", 0) > 0:
+                    result["count"] = gob_v3["count"]
+                    result["endCount"] = gob_v3["count"]
+                    result["features"] = gob_v3.get("features", [])
+                    result["source"] = gob_v3["source"]
+                    logger.info(f"GOB V3: {result['count']} buildings found")
+        except Exception as e:
+            logger.warning(f"GOB V3 query failed: {e}")
+
+    # Strategy 3: If still no data, fall back to Overture Maps
+    if result["count"] is None or result["count"] == 0:
+        try:
+            from app.services.overture_service import get_microsoft_buildings
+            overture = get_microsoft_buildings(polygon)
+            if overture and overture.get("count", 0) > 0:
+                result["count"] = overture["count"]
+                result["endCount"] = overture["count"]
+                result["features"] = overture.get("features", [])
+                result["source"] = overture["source"]
+                logger.info(f"Overture: {result['count']} buildings found")
+        except Exception as e:
+            logger.warning(f"Overture query failed: {e}")
+
+    # Always: Get Dynamic World built-up % for temporal context
+    try:
+        from app.services.gee_service import is_initialized, get_dynamic_world_timeseries
+        if is_initialized():
+            dw = get_dynamic_world_timeseries(polygon, start_year, end_year)
+            result["builtUpPercent"] = dw.get("builtUpPercent")
+
+            # If we don't have building count time series, use Dynamic World
+            if not result["timeSeries"]:
+                result["timeSeries"] = dw.get("timeSeries", [])
+                if not result["source"]:
+                    result["source"] = "dynamic_world_v1"
+                    result["startCount"] = dw.get("startCount")
+                    result["endCount"] = dw.get("endCount")
+    except Exception as e:
+        logger.warning(f"Dynamic World query failed: {e}")
+
+    # If we still have nothing
+    if result["count"] is None and not result["timeSeries"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No building data available for this region. "
+                   "GEE may not be initialized or the area has no coverage.",
+        )
+
+    return result
 
 
 @router.post("/temporal/buildings")

@@ -3,7 +3,10 @@ Google Earth Engine service.
 Provides building footprint queries, Dynamic World time series, and satellite composites.
 """
 
+import json
 import logging
+import os
+import tempfile
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -12,21 +15,48 @@ _ee = None
 _initialized = False
 
 
-def init_gee(service_account_key_path: str):
-    """Initialize Earth Engine with a service account."""
+def init_gee(service_account_key: str):
+    """
+    Initialize Earth Engine with a service account.
+    Accepts either:
+      - A file path to a JSON key file (local dev)
+      - A raw JSON string (deployed on Render/etc)
+    """
     global _ee, _initialized
 
     import ee
 
     try:
+        # Detect whether we got a file path or raw JSON content
+        if os.path.isfile(service_account_key):
+            key_file = service_account_key
+        else:
+            # It's a JSON string — write to a temp file for the EE SDK
+            key_data = json.loads(service_account_key)
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            )
+            json.dump(key_data, tmp)
+            tmp.close()
+            key_file = tmp.name
+            logger.info("GEE key loaded from environment variable")
+
+        # Extract service account email from the key
+        with open(key_file) as f:
+            key_info = json.load(f)
+        email = key_info.get("client_email")
+
         credentials = ee.ServiceAccountCredentials(
-            email=None,
-            key_file=service_account_key_path,
+            email=email,
+            key_file=key_file,
         )
         ee.Initialize(credentials=credentials)
         _ee = ee
         _initialized = True
-        logger.info("Earth Engine initialized successfully")
+        logger.info(f"Earth Engine initialized for {email}")
+    except json.JSONDecodeError as e:
+        logger.error(f"GEE key is not valid JSON: {e}")
+        raise
     except Exception as e:
         logger.error(f"Failed to initialize Earth Engine: {e}")
         raise

@@ -36,3 +36,4 @@ Thumbs.db
 
 # Tile cache
 /tmp/gis_tiles/
+.vercel

@@ -112,7 +112,7 @@ def is_initialized() -> bool:
 def get_open_buildings_temporal(polygon: dict, start_year: int, end_year: int) -> dict:
     """
     Query Google Open Buildings 2.5D Temporal dataset.
-    Returns annual building count estimates from 2016–2023.
+    Returns building count for start and end years only (optimized for speed).
     Uses the `building_fractional_count` band summed over the polygon.
     """
     _ensure_initialized()
@@ -125,7 +125,10 @@ def get_open_buildings_temporal(polygon: dict, start_year: int, end_year: int) -
     actual_start = max(start_year, 2016)
     actual_end = min(end_year, 2023)
 
-    for year in range(actual_start, actual_end + 1):
+    # Only query start + end year for speed (2 calls instead of 6-8)
+    years_to_query = sorted(set([actual_start, actual_end]))
+
+    for year in years_to_query:
         try:
             dataset = ee.ImageCollection(
                 "GOOGLE/Research/open-buildings-temporal/v1"

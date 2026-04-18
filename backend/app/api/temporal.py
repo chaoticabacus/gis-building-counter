@@ -33,9 +33,9 @@ async def get_building_count(request: TemporalRequest):
     Auto-selects the best data source based on region:
       - Google Open Buildings (Africa, S/SE Asia, LatAm)
       - Overture Maps / Microsoft (Central Asia, Ukraine, Middle East, rest of world)
-      - Dynamic World (built-up area % for all regions)
+      - Dynamic World (built-up area % fallback)
     
-    Returns building counts, time series, and footprints in one call.
+    Optimized: queries only start + end years for speed.
     """
     polygon = request.polygon
     start_year = request.start_year
@@ -51,11 +51,11 @@ async def get_building_count(request: TemporalRequest):
         "builtUpPercent": None,
     }
 
-    # Strategy 1: Try Google Open Buildings Temporal (2016-2023)
-    gob_temporal = None
+    # Strategy 1: Try Google Open Buildings Temporal — just start + end year
     try:
         from app.services.gee_service import is_initialized, get_open_buildings_temporal
         if is_initialized():
+            # Only query start and end years for speed
             gob_temporal = get_open_buildings_temporal(polygon, start_year, end_year)
             if gob_temporal and gob_temporal.get("endCount") and gob_temporal["endCount"] > 0:
                 result["timeSeries"] = gob_temporal["timeSeries"]
@@ -67,7 +67,7 @@ async def get_building_count(request: TemporalRequest):
     except Exception as e:
         logger.warning(f"GOB Temporal query failed: {e}")
 
-    # Strategy 2: If GOB had no data, try Google Open Buildings V3 polygons
+    # Strategy 2: If GOB Temporal had no data, try V3 polygons (single query)
     if result["count"] is None or result["count"] == 0:
         try:
             from app.services.gee_service import is_initialized, get_open_buildings
@@ -96,22 +96,21 @@ async def get_building_count(request: TemporalRequest):
         except Exception as e:
             logger.warning(f"Overture query failed: {e}")
 
-    # Always: Get Dynamic World built-up % for temporal context
-    try:
-        from app.services.gee_service import is_initialized, get_dynamic_world_timeseries
-        if is_initialized():
-            dw = get_dynamic_world_timeseries(polygon, start_year, end_year)
-            result["builtUpPercent"] = dw.get("builtUpPercent")
-
-            # If we don't have building count time series, use Dynamic World
-            if not result["timeSeries"]:
-                result["timeSeries"] = dw.get("timeSeries", [])
+    # Strategy 4 (fallback only): Dynamic World if nothing else worked
+    if result["count"] is None or result["count"] == 0:
+        try:
+            from app.services.gee_service import is_initialized, get_dynamic_world_timeseries
+            if is_initialized():
+                dw = get_dynamic_world_timeseries(polygon, start_year, end_year)
+                result["builtUpPercent"] = dw.get("builtUpPercent")
+                if not result["timeSeries"]:
+                    result["timeSeries"] = dw.get("timeSeries", [])
                 if not result["source"]:
                     result["source"] = "dynamic_world_v1"
                     result["startCount"] = dw.get("startCount")
                     result["endCount"] = dw.get("endCount")
-    except Exception as e:
-        logger.warning(f"Dynamic World query failed: {e}")
+        except Exception as e:
+            logger.warning(f"Dynamic World query failed: {e}")
 
     # If we still have nothing
     if result["count"] is None and not result["timeSeries"]:

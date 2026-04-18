@@ -30,12 +30,12 @@ class ImageryRequest(BaseModel):
 async def get_building_count(request: TemporalRequest):
     """
     Unified building count endpoint.
-    Auto-selects the best data source based on region:
-      - Google Open Buildings (Africa, S/SE Asia, LatAm)
-      - Overture Maps / Microsoft (Central Asia, Ukraine, Middle East, rest of world)
-      - Dynamic World (built-up area % fallback)
     
-    Optimized: queries only start + end years for speed.
+    Strategy (ordered by accuracy):
+      1. GOB V3 polygons — most accurate (individual building footprints)
+      2. Overture Maps — fills coverage gaps (Central Asia, Ukraine, Middle East)
+      3. GOB Temporal — trend data only (2.5D raster, less accurate for counts)
+      4. Dynamic World — built-up area percentage fallback
     """
     polygon = request.polygon
     start_year = request.start_year
@@ -51,38 +51,21 @@ async def get_building_count(request: TemporalRequest):
         "builtUpPercent": None,
     }
 
-    # Strategy 1: Try Google Open Buildings Temporal — just start + end year
+    # Strategy 1: GOB V3 polygons — MOST ACCURATE (each polygon = one building)
     try:
-        from app.services.gee_service import is_initialized, get_open_buildings_temporal
+        from app.services.gee_service import is_initialized, get_open_buildings
         if is_initialized():
-            # Only query start and end years for speed
-            gob_temporal = get_open_buildings_temporal(polygon, start_year, end_year)
-            if gob_temporal and gob_temporal.get("endCount") and gob_temporal["endCount"] > 0:
-                result["timeSeries"] = gob_temporal["timeSeries"]
-                result["startCount"] = gob_temporal["startCount"]
-                result["endCount"] = gob_temporal["endCount"]
-                result["count"] = gob_temporal["endCount"]
-                result["source"] = gob_temporal["source"]
-                logger.info(f"GOB Temporal: {result['count']} buildings found")
+            gob_v3 = get_open_buildings(polygon, end_year)
+            if gob_v3 and gob_v3.get("count", 0) > 0:
+                result["count"] = gob_v3["count"]
+                result["endCount"] = gob_v3["count"]
+                result["features"] = gob_v3.get("features", [])
+                result["source"] = "google_open_buildings_v3"
+                logger.info(f"GOB V3: {result['count']} buildings found")
     except Exception as e:
-        logger.warning(f"GOB Temporal query failed: {e}")
+        logger.warning(f"GOB V3 query failed: {e}")
 
-    # Strategy 2: If GOB Temporal had no data, try V3 polygons (single query)
-    if result["count"] is None or result["count"] == 0:
-        try:
-            from app.services.gee_service import is_initialized, get_open_buildings
-            if is_initialized():
-                gob_v3 = get_open_buildings(polygon, end_year)
-                if gob_v3 and gob_v3.get("count", 0) > 0:
-                    result["count"] = gob_v3["count"]
-                    result["endCount"] = gob_v3["count"]
-                    result["features"] = gob_v3.get("features", [])
-                    result["source"] = gob_v3["source"]
-                    logger.info(f"GOB V3: {result['count']} buildings found")
-        except Exception as e:
-            logger.warning(f"GOB V3 query failed: {e}")
-
-    # Strategy 3: If still no data, fall back to Overture Maps
+    # Strategy 2: If GOB V3 had no coverage, try Overture Maps
     if result["count"] is None or result["count"] == 0:
         try:
             from app.services.overture_service import get_microsoft_buildings
@@ -96,7 +79,27 @@ async def get_building_count(request: TemporalRequest):
         except Exception as e:
             logger.warning(f"Overture query failed: {e}")
 
-    # Strategy 4 (fallback only): Dynamic World if nothing else worked
+    # Strategy 3: GOB Temporal for trend data (start + end year comparison)
+    try:
+        from app.services.gee_service import is_initialized, get_open_buildings_temporal
+        if is_initialized():
+            gob_temporal = get_open_buildings_temporal(polygon, start_year, end_year)
+            if gob_temporal:
+                result["timeSeries"] = gob_temporal.get("timeSeries", [])
+                # Only use temporal counts if we have no better count
+                if result["count"] is None or result["count"] == 0:
+                    if gob_temporal.get("endCount") and gob_temporal["endCount"] > 0:
+                        result["count"] = gob_temporal["endCount"]
+                        result["endCount"] = gob_temporal["endCount"]
+                        result["startCount"] = gob_temporal.get("startCount")
+                        result["source"] = "google_open_buildings_temporal_v1"
+                else:
+                    # We have a better count — use temporal for start count estimate only
+                    result["startCount"] = gob_temporal.get("startCount")
+    except Exception as e:
+        logger.warning(f"GOB Temporal query failed: {e}")
+
+    # Strategy 4 (fallback): Dynamic World for built-up area %
     if result["count"] is None or result["count"] == 0:
         try:
             from app.services.gee_service import is_initialized, get_dynamic_world_timeseries

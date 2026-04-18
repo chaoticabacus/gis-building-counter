@@ -24,13 +24,18 @@ async def lifespan(app: FastAPI):
     logger.info("GIS Building Counter API starting...")
 
     # Initialize GEE if credentials are available
+    app.state.gee_error = None
     if settings.gee_service_account_key:
         try:
             from app.services.gee_service import init_gee
             init_gee(settings.gee_service_account_key)
-            logger.info("Google Earth Engine initialized")
+            logger.info("Google Earth Engine initialized successfully")
         except Exception as e:
-            logger.warning(f"GEE initialization failed: {e}")
+            app.state.gee_error = str(e)
+            logger.error(f"GEE initialization failed: {e}")
+    else:
+        app.state.gee_error = "GEE_SERVICE_ACCOUNT_KEY not set"
+        logger.warning("GEE_SERVICE_ACCOUNT_KEY not found in environment")
 
     yield
     logger.info("GIS Building Counter API shutting down")
@@ -62,8 +67,10 @@ app.include_router(export.router, prefix="/api", tags=["export"])
 @app.get("/health")
 async def health():
     """Health check endpoint."""
+    from app.services.gee_service import is_initialized
     return {
         "status": "healthy",
-        "gee_initialized": settings.gee_service_account_key is not None,
+        "gee_initialized": is_initialized(),
+        "gee_error": getattr(app.state, 'gee_error', None),
         "version": "1.0.0",
     }

@@ -302,8 +302,18 @@ export default function MapView({ theme, onCoordinatesChange, onZoomChange, onPo
               <button
                 className="btn btn--secondary btn--sm"
                 onClick={() => {
-                  setIsDrawing(false);
-                  if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
+                  if (drawPoints.length >= 3) {
+                    const polygon = {
+                      type: 'Polygon',
+                      coordinates: [[...drawPoints, drawPoints[0]]],
+                    };
+                    setIsDrawing(false);
+                    if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
+                    onPolygonDrawn?.(polygon);
+                  } else {
+                    setIsDrawing(false);
+                    if (mapRef.current) mapRef.current.getCanvas().style.cursor = '';
+                  }
                 }}
                 id="btn-stop-draw"
               >

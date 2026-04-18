@@ -6,11 +6,11 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://gis-counter-api.onrender.com/api/:path*"
+      "destination": "https://gis-building-counter.onrender.com/api/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://gis-counter-api.onrender.com/health"
+      "destination": "https://gis-building-counter.onrender.com/health"
     }
   ],
   "headers": [

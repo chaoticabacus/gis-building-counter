@@ -1,0 +1,18 @@
+# Core
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-multipart==0.0.20
+httpx==0.28.1
+
+# GEE
+earthengine-api==1.5.8
+
+# Image processing
+Pillow==11.2.1
+
+# Data
+geojson==3.2.0
+numpy==2.2.5
+
+# Export
+pandas==2.2.3

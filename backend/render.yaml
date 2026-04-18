@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: gis-counter-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://gis-counter.vercel.app,http://localhost:5173
+      - key: GEE_SERVICE_ACCOUNT_KEY
+        sync: false
+      - key: COLAB_URL
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true
+    rootDir: backend
